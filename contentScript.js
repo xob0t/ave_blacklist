@@ -794,18 +794,40 @@ function createSpinner() {
   return spinner;
 }
 
+function getPaginator(root = document) {
+  return (
+    root.querySelector('[class*="js-pages"]') ||
+    root.querySelector('[data-marker="pagination-button"]')?.closest('[class*="js-pages"]') ||
+    null
+  );
+}
+
+function getOfferListContainers(root = document) {
+  const byClass = [...root.querySelectorAll('[class*="items-items-"]')];
+  if (byClass.length > 0) return byClass;
+  const serp =
+    root.querySelector('[data-marker="catalog-serp"]') ||
+    root.querySelector("#bx_serp-item-list");
+  return serp ? [serp] : [];
+}
+
+function getOfferElementsFromContainer(container) {
+  if (!container) return [];
+  return [...container.querySelectorAll('[data-marker="item"], [data-item-id]')];
+}
+
 function getMainOffersContainer() {
-  const containers = document.querySelectorAll('[class*="items-items-"]');
+  const containers = getOfferListContainers();
   return containers.length > 0 ? containers[0] : null;
 }
 
 function getOtherCitiesContainer() {
-  const containers = document.querySelectorAll('[class*="items-items-"]');
+  const containers = getOfferListContainers();
   return containers.length > 1 ? containers[1] : null;
 }
 
 function isPaginatorVisible() {
-  const paginator = document.querySelector('[class*="js-pages pagination-pagination-"]');
+  const paginator = getPaginator();
   if (!paginator) {
     console.log(`${logPrefix} Paginator not found`);
     return false;
@@ -820,9 +842,17 @@ function isPaginatorVisible() {
 
 // Get current page number
 function getCurrentPage() {
-  const currentPageElement = document.querySelector('[class*="styles-module-item_current-"]');
+  const paginator = getPaginator();
+  const currentPageElement =
+    paginator?.querySelector('[aria-current="page"]') ||
+    paginator?.querySelector('[class*="item_current-"]') ||
+    document.querySelector('[aria-current="page"]') ||
+    document.querySelector('[class*="item_current-"]') ||
+    document.querySelector('[class*="styles-module-item_current-"]');
   if (currentPageElement) {
-    const pageText = currentPageElement.querySelector("span")?.textContent;
+    const pageText =
+      currentPageElement.querySelector("span")?.textContent ||
+      currentPageElement.textContent;
     const page = parseInt(pageText, 10) || 1;
     console.log(`${logPrefix} Current page: ${page}`);
     return page;
@@ -832,8 +862,16 @@ function getCurrentPage() {
 }
 
 function getNextPageUrl() {
+  const paginator = getPaginator();
+  const nextArrow =
+    paginator?.querySelector('a[data-marker="pagination-button/nextPage"][href]') ||
+    document.querySelector('a[data-marker="pagination-button/nextPage"][href]');
+  if (nextArrow?.href) {
+    console.log(`${logPrefix} Next page URL: ${nextArrow.href}`);
+    return nextArrow.href;
+  }
   const currentPage = getCurrentPage();
-  const nextPageElement = document.querySelector(`[data-value="${currentPage + 1}"]`);
+  const nextPageElement = (paginator || document).querySelector(`a[data-value="${currentPage + 1}"]`);
   const url = nextPageElement ? nextPageElement.href : null;
   console.log(`${logPrefix} Next page URL: ${url}`);
   return url;
@@ -849,38 +887,74 @@ function removeBrokenElements(item) {
   });
 }
 
-// Fix missing images in an item
-function fixItemImages(item) {
-  const imageContainers = item.querySelectorAll('[class*="photo-slider-dotsCounter"]');
-  imageContainers.forEach((container) => {
-    const imageMarker = container.getAttribute("data-marker");
-    if (!imageMarker || !imageMarker.startsWith("slider-image/image-")) return;
-
-    const imageUrl = imageMarker.replace("slider-image/image-", "");
-
-    const imageSpan = container.querySelector("[class*='photo-slider-image-']");
-
-    // If we have a span instead of an img, fix it
-    if (imageSpan && imageSpan.tagName === "SPAN") {
-      const img = document.createElement("img");
-      img.className = "photo-slider-image";
-      img.alt = item.querySelector('[itemprop="name"]')?.textContent || "";
-      img.src = imageUrl;
-
-      // Replace span with img
-      imageSpan.replaceWith(img);
-    }
-  });
+function getSliderImageUrl(container) {
+  const marker = container.getAttribute("data-marker") || "";
+  if (marker.startsWith("slider-image/image-")) {
+    return marker.slice("slider-image/image-".length);
+  }
+  return null;
 }
 
-// Process new items - fix images and add to DOM
+function rehydrateImage(img) {
+  if (!img) return;
+  const src = img.getAttribute("src");
+  const srcset = img.getAttribute("srcset");
+  if (src && !src.startsWith("data:") && !src.startsWith("about:")) {
+    img.src = src;
+  }
+  if (srcset) {
+    img.srcset = srcset;
+  }
+}
+
+function fixItemImages(item) {
+  const imageContainers = item.querySelectorAll(
+    '[data-marker^="slider-image/image-"], [class*="dotsCounter-"], [class*="photo-slider-dotsCounter"]'
+  );
+
+  imageContainers.forEach((container) => {
+    const imageUrl = getSliderImageUrl(container);
+    let img = container.querySelector("img");
+    const placeholderSpan = [...container.querySelectorAll("span")].find((el) =>
+      [...el.classList].some((c) => c.includes("photo-slider-image") || (c.includes("image-") && !c.includes("item-")))
+    );
+
+    if (placeholderSpan && placeholderSpan.tagName === "SPAN" && !img) {
+      img = document.createElement("img");
+      img.className = placeholderSpan.className || "photo-slider-image";
+      img.alt = item.querySelector('[itemprop="name"]')?.textContent || "";
+      if (imageUrl) img.src = imageUrl;
+      placeholderSpan.replaceWith(img);
+    }
+
+    if (!img && imageUrl) {
+      img = document.createElement("img");
+      img.alt = item.querySelector('[itemprop="name"]')?.textContent || "";
+      img.src = imageUrl;
+      const holder = container.querySelector('[class*="item-"]') || container;
+      holder.appendChild(img);
+    }
+
+    if (img && imageUrl) {
+      const currentSrc = img.getAttribute("src") || "";
+      if (!currentSrc || currentSrc.startsWith("data:") || currentSrc.startsWith("about:")) {
+        img.src = imageUrl;
+      }
+    }
+
+    rehydrateImage(img);
+  });
+
+  item.querySelectorAll("img").forEach(rehydrateImage);
+}
+
 function processNewItems(newItems, targetContainer) {
   console.log(`${logPrefix} Processing ${newItems.length} new items into ${targetContainer.className}`);
   newItems.forEach((offer) => {
     const clone = offer.cloneNode(true);
     removeBrokenElements(clone);
-    fixItemImages(clone);
     targetContainer.appendChild(clone);
+    fixItemImages(clone);
     processOfferElement(clone);
   });
 }
@@ -913,7 +987,7 @@ async function fetchNextPage() {
   console.log(`${logPrefix} Загрузка страницы  ${getCurrentPage() + 1}`);
 
   // Append spinner to pagination
-  const paginator = document.querySelector('[class*="js-pages pagination-pagination-"]');
+  const paginator = getPaginator();
   if (paginator) {
     paginator.style.position = "relative";
 
@@ -932,13 +1006,31 @@ async function fetchNextPage() {
   }
 
   try {
-    const response = await fetch(nextPageUrl);
+    const response = await fetch(nextPageUrl, {
+      headers: {
+        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      },
+    });
     const html = await response.text();
+    const trimmedHtml = html.trimStart();
+    if (
+      !trimmedHtml.startsWith("<!DOCTYPE") &&
+      !trimmedHtml.startsWith("<!doctype") &&
+      !trimmedHtml.startsWith("<html") &&
+      !trimmedHtml.startsWith("<?xml")
+    ) {
+      console.warn(`${logPrefix} Получен не HTML при автопагинации, возможно updateListOnly/JSON`);
+      return;
+    }
     const parser = new DOMParser();
     const doc = parser.parseFromString(html, "text/html");
+    if (doc.head && !doc.querySelector("base")) {
+      const base = doc.createElement("base");
+      base.href = `${window.location.origin}/`;
+      doc.head.prepend(base);
+    }
 
-    // Find all containers in the new page
-    const newContainers = doc.querySelectorAll('[class*="items-items"]');
+    const newContainers = getOfferListContainers(doc);
 
     console.log(`${logPrefix} Found ${newContainers.length} containers in new page`);
 
@@ -949,26 +1041,16 @@ async function fetchNextPage() {
 
     let addedItemsCount = 0;
 
-    // Find catalog data in the new page
-    const scriptElements = doc.querySelectorAll("script");
-    for (const script of scriptElements) {
-      if (script.textContent.includes("abCentral") && !script.textContent.startsWith("window[")) {
-        try {
-          const initCatalogDataContent = script.textContent;
-          const decodedJson = decodeHtmlEntities(initCatalogDataContent);
-          const newInitialData = JSON.parse(decodedJson);
-          const newCatalogData = getCatalogDataFromInit(newInitialData);
-          appendCatalogData(newCatalogData);
-          console.log(`${logPrefix} Added ${newCatalogData.length} items to catalogData`);
-          break;
-        } catch (error) {
-          console.error(`${logPrefix} Error parsing catalog data from new page:`, error);
-        }
-      }
+    const newCatalogData = extractCatalogDataFromDoc(doc);
+    if (newCatalogData.length > 0) {
+      appendCatalogData(newCatalogData);
+      console.log(`${logPrefix} Added ${newCatalogData.length} items to catalogData`);
+    } else {
+      console.warn(`${logPrefix} catalogData со следующей страницы не найден, используем DOM карточек`);
     }
 
     // Process main offers (first container)
-    const newMainOffers = Array.from(newContainers[0].children).filter((el) => el.hasAttribute("data-item-id"));
+    const newMainOffers = getOfferElementsFromContainer(newContainers[0]);
     if (newMainOffers.length > 0) {
       const mainContainer = getMainOffersContainer();
       if (mainContainer) {
@@ -982,7 +1064,7 @@ async function fetchNextPage() {
 
     // Process other cities offers (second container if exists)
     if (newContainers.length > 1) {
-      const newOtherCitiesOffers = Array.from(newContainers[1].children).filter((el) => el.hasAttribute("data-item-id"));
+      const newOtherCitiesOffers = getOfferElementsFromContainer(newContainers[1]);
       if (newOtherCitiesOffers.length > 0) {
         let targetContainer = getOtherCitiesContainer();
 
@@ -1009,7 +1091,7 @@ async function fetchNextPage() {
     autoPaginationItemsLoaded += addedItemsCount;
 
     // Update pagination
-    const newPaginator = doc.querySelector('[class*="js-pages pagination-pagination-"]');
+    const newPaginator = getPaginator(doc);
     if (newPaginator) {
       if (paginator) {
         paginator.innerHTML = newPaginator.innerHTML;
@@ -1079,8 +1161,117 @@ async function initPagination() {
 const EXCLUDED_URL_PATHS = ['user', 'brands', 'companies', 'shops', 'profile', 'favorites', 'messages'];
 
 // CSS класс Avito для визуального состояния "включено" у переключателя
-// Примечание: класс содержит хеш, который может измениться при обновлении Avito
-const TOGGLE_CHECKED_CLASS = 'styles-module-controlledInput_checked-fJhQQ';
+// Примечание: класс содержит хеш, который изменяется при обновлении Avito; определяется динамически
+let TOGGLE_CHECKED_CLASS = null;
+let _applyingToggleVisual = false;
+const LEGACY_TOGGLE_CHECKED_CLASS = 'styles-module-controlledInput_checked-fJhQQ';
+
+function findCheckedClassIn(el) {
+  if (!el?.classList) return null;
+  return [...el.classList].find(
+    (c) => (c.includes('controlledInput_checked-') || c.includes('_checked-') || c.includes('toggle_checked')) &&
+      c !== LEGACY_TOGGLE_CHECKED_CLASS
+  ) || null;
+}
+
+function getCssModuleHash(el, prefix) {
+  if (!el?.classList) return null;
+  const found = [...el.classList].find((c) => {
+    if (!c.startsWith(prefix)) return false;
+    const rest = c.slice(prefix.length);
+    return rest && !rest.includes('_');
+  });
+  return found ? found.slice(prefix.length) : null;
+}
+
+function detectToggleCheckedClass() {
+  try {
+    const anySwitcher =
+      document.querySelector('label[data-marker="filters/localPriority/localPriority"]') ||
+      document.querySelector(`[data-marker="${CITY_FILTER_MARKER}"]`) ||
+      document.querySelector(`[data-marker="${HIDE_RESERVED_FILTER_MARKER}"]`) ||
+      document.querySelector('label[role="switch"]');
+    const input = anySwitcher?.querySelector('input[type="checkbox"]');
+    const toggleEl = anySwitcher?.querySelector('[class*="toggle-"]');
+
+    const present =
+      findCheckedClassIn(input) ||
+      [...document.querySelectorAll('input[type="checkbox"]')].map(findCheckedClassIn).find(Boolean);
+    if (present) {
+      TOGGLE_CHECKED_CLASS = present;
+      return present;
+    }
+
+    const hash = getCssModuleHash(toggleEl, 'toggle-') || (() => {
+      const toggleHashes = toggleEl ? [...toggleEl.classList].map((c) => c.split('-').pop()) : [];
+      const inputHashes = input ? [...input.classList].filter((c) => c.startsWith('input-')).map((c) => c.slice(6)) : [];
+      return inputHashes.find((h) => toggleHashes.includes(h)) || null;
+    })();
+
+    if (hash) {
+      TOGGLE_CHECKED_CLASS = `controlledInput_checked-${hash}`;
+      return TOGGLE_CHECKED_CLASS;
+    }
+  } catch (e) {
+    // визуал пойдёт через CSS .ave-filter-toggle
+  }
+  return TOGGLE_CHECKED_CLASS;
+}
+
+function findSwitcherCircle(checkbox) {
+  const scope = checkbox?.closest('label') || checkbox?.parentElement || checkbox;
+  if (!scope?.querySelector) return null;
+  return (
+    scope.querySelector('[class*="switcherCircle-"]') ||
+    scope.querySelector('[class*="toggle-"] > span') ||
+    scope.querySelector('[class*="circle-"]')
+  );
+}
+
+function setSwitcherCirclePosition(checkbox, isEnabled) {
+  const circle = findSwitcherCircle(checkbox);
+  if (!circle) return;
+  const toggle = circle.closest('[class*="toggle-"]') || circle.parentElement;
+  let shift = 16;
+  if (isEnabled && toggle) {
+    const toggleWidth = toggle.offsetWidth;
+    const circleWidth = circle.offsetWidth;
+    if (toggleWidth && circleWidth) {
+      shift = Math.max(toggleWidth - circleWidth - 4, 12);
+    }
+  }
+  circle.style.setProperty('transform', isEnabled ? `translateX(${shift}px)` : 'translateX(0px)', 'important');
+}
+
+function bindCustomToggleClassGuard(checkbox, getIsEnabled) {
+  if (!checkbox || checkbox.dataset.aveClassGuard === '1') return;
+  checkbox.dataset.aveClassGuard = '1';
+  new MutationObserver(() => {
+    if (_applyingToggleVisual) return;
+    const label = checkbox.closest('label');
+    setToggleVisualState(checkbox, label, Boolean(getIsEnabled()));
+  }).observe(checkbox, { attributes: true, attributeFilter: ['class', 'checked'] });
+}
+
+function bindNativePriorityToggleWatcher() {
+  const native = document.querySelector('label[data-marker="filters/localPriority/localPriority"]');
+  if (!native || native.dataset.aveNativeWatch === '1') return;
+  native.dataset.aveNativeWatch = '1';
+  const syncOurs = () => {
+    updateCityFilterToggleState();
+    updateHideReservedToggleState();
+  };
+  native.addEventListener('click', () => {
+    setTimeout(syncOurs, 0);
+    setTimeout(syncOurs, 50);
+  }, true);
+  const input = native.querySelector('input[type="checkbox"]');
+  if (input) {
+    input.addEventListener('change', syncOurs);
+    new MutationObserver(syncOurs).observe(input, { attributes: true, attributeFilter: ['class', 'checked'] });
+  }
+}
+
 const CITY_FILTER_MARKER = 'filters/cityOnly';
 const HIDE_RESERVED_FILTER_MARKER = 'filters/hideReserved';
 const RESERVED_CHECK_TIMEOUT_MS = 5000;
@@ -1126,7 +1317,10 @@ function getOfferUrl(offerElement) {
 
 // Получение читаемого названия города из UI (из элемента "Сначала из Тюмени")
 function getCityDisplayName() {
-  const localPriorityLabel = document.querySelector('.filters-switcherLabel-vbkFI');
+  const localPriorityLabel =
+    document.querySelector('label[data-marker="filters/localPriority/localPriority"] [class*="switcherLabel-"]') ||
+    document.querySelector('[class*="switcherLabel-"]') ||
+    document.querySelector('.filters-switcherLabel-vbkFI');
   if (localPriorityLabel) {
     const text = localPriorityLabel.textContent;
     // Извлекаем название города из "Сначала из Тюмени" -> "Тюмени"
@@ -1156,12 +1350,37 @@ function isOfferFromCurrentCity(offerElement) {
 
 // Установка визуального состояния переключателя (checkbox + label)
 function setToggleVisualState(checkbox, label, isEnabled) {
-  if (checkbox) {
-    checkbox.checked = isEnabled;
-    checkbox.classList.toggle(TOGGLE_CHECKED_CLASS, isEnabled);
-  }
-  if (label) {
-    label.setAttribute('aria-checked', isEnabled ? 'true' : 'false');
+  _applyingToggleVisual = true;
+  try {
+    const wantEnabled = Boolean(isEnabled);
+    if (checkbox) {
+      if (checkbox.checked !== wantEnabled) {
+        checkbox.checked = wantEnabled;
+      }
+      if (wantEnabled) {
+        if (!checkbox.hasAttribute('checked')) checkbox.setAttribute('checked', '');
+      } else if (checkbox.hasAttribute('checked')) {
+        checkbox.removeAttribute('checked');
+      }
+
+      const checkedClass = detectToggleCheckedClass();
+      if (checkedClass && checkbox.classList.contains(checkedClass) !== wantEnabled) {
+        checkbox.classList.toggle(checkedClass, wantEnabled);
+      }
+
+      setSwitcherCirclePosition(checkbox, wantEnabled);
+    }
+    if (label) {
+      const aria = wantEnabled ? 'true' : 'false';
+      if (label.getAttribute('aria-checked') !== aria) {
+        label.setAttribute('aria-checked', aria);
+      }
+      label.classList.add('ave-filter-toggle');
+    }
+  } finally {
+    queueMicrotask(() => {
+      _applyingToggleVisual = false;
+    });
   }
 }
 
@@ -1182,14 +1401,26 @@ function updateHideReservedToggleState() {
   setToggleVisualState(checkbox, label, hideReservedEnabled);
 }
 
+function findTopPanel() {
+  return (
+    document.querySelector('[class*="topPanel-"]') ||
+    document.querySelector('[class*="index-topPanel-"]') ||
+    document.querySelector('[data-marker="view-change"]')?.closest('[class*="topPanel"]')
+  );
+}
+
 function insertSearchFilterToggle(options) {
+  bindNativePriorityToggleWatcher();
   const existingToggle = document.querySelector(`[data-marker="${options.labelMarker}"]`);
   if (existingToggle) {
+    existingToggle.classList.add('ave-filter-toggle');
+    const existingCheckbox = existingToggle.querySelector('input[type="checkbox"]');
+    bindCustomToggleClassGuard(existingCheckbox, options.getIsEnabled);
     options.onExisting(existingToggle);
     return;
   }
 
-  const topPanel = document.querySelector('[class*="index-topPanel-"]');
+  const topPanel = findTopPanel();
   if (!topPanel) {
     console.log(`${logPrefix} Верхняя панель не найдена для вставки переключателя ${options.labelMarker}`);
     return;
@@ -1203,6 +1434,9 @@ function insertSearchFilterToggle(options) {
 
   const getToggleHostContainer = (labelElement) => {
     return (
+      labelElement.closest('[class*="switcherWrapper-"]') ||
+      labelElement.closest('[class*="additions-"]') ||
+      labelElement.closest('[class*="theme-provider-"]') ||
       labelElement.closest('[class*="styles-module-theme-"]') ||
       labelElement.closest('[class*="filters-subscription-additions-"]') ||
       labelElement.parentElement
@@ -1216,12 +1450,16 @@ function insertSearchFilterToggle(options) {
   }
 
   const newContainer = parentContainer.cloneNode(true);
+  newContainer.style.marginLeft = '24px';
   const newLabel = newContainer.querySelector('label');
   if (newLabel) {
     newLabel.setAttribute('data-marker', options.labelMarker);
+    newLabel.classList.add('ave-filter-toggle');
   }
 
-  const labelText = newContainer.querySelector('.filters-switcherLabel-vbkFI');
+  const labelText =
+    newContainer.querySelector('[class*="switcherLabel-"]') ||
+    newContainer.querySelector('.filters-switcherLabel-vbkFI');
   if (labelText) {
     labelText.textContent = typeof options.labelText === 'function' ? options.labelText() : options.labelText;
   }
@@ -1232,6 +1470,7 @@ function insertSearchFilterToggle(options) {
     checkbox.value = options.checkboxValue;
     checkbox.setAttribute('data-marker', `${options.labelMarker}/toggle`);
     setToggleVisualState(checkbox, newLabel, options.getIsEnabled());
+    bindCustomToggleClassGuard(checkbox, options.getIsEnabled);
     checkbox.addEventListener('change', function () {
       options.onToggle(this.checked, this, newLabel);
     });
@@ -1261,7 +1500,9 @@ function insertCityFilterToggle() {
     insertAfterMarker: 'filters/localPriority/localPriority',
     onExisting: () => {
       updateCityFilterToggleState();
-      const existingText = document.querySelector(`[data-marker="${CITY_FILTER_MARKER}"] .filters-switcherLabel-vbkFI`);
+      const existingText =
+        document.querySelector(`[data-marker="${CITY_FILTER_MARKER}"] [class*="switcherLabel-"]`) ||
+        document.querySelector(`[data-marker="${CITY_FILTER_MARKER}"] .filters-switcherLabel-vbkFI`);
       if (existingText) {
         existingText.textContent = `Только из ${getCityDisplayName()}`;
       }
@@ -1452,8 +1693,40 @@ function extractUserIdFromSellerUrl(sellerUrl) {
 }
 
 function extractUserIdFromOfferElement(offerElement) {
-  const sellerLinkElement = offerElement.querySelector('a[href*="/user/"]') ||
+  // Основной путь: ссылка на продавца внутри самой карточки товара
+  let sellerLinkElement =
+    offerElement.querySelector('a[href*="/user/"]') ||
     offerElement.querySelector('a[href*="/brands/"]');
+
+  // Fallback: иногда seller-ссылка лежит в sibling-блоке справа от карточки (столбец с продавцом)
+  // Ищем: "Николай ★★★★★ 5,0 · 167 отзывов" с любым href="/user/profile?u=..."
+  if (!sellerLinkElement) {
+    const parentRow = offerElement.parentElement;
+    if (parentRow) {
+      const siblings = [...parentRow.children].filter((c) => c !== offerElement);
+      for (const sib of siblings) {
+        if (sib instanceof Element) {
+          const userLink = sib.querySelector('a[href*="/user/"]') || sib.querySelector('a[href*="/brands/"]');
+          if (userLink) {
+            sellerLinkElement = userLink;
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  // В качестве последнего запаса — ищем в ближайшем контейнере, который объединяет card+seller
+  //   (обычно root-flex элемент, содержащий и карточку, и блок справа)
+  if (!sellerLinkElement) {
+    const unifiedContainer = offerElement.closest('[class*="root-"]');
+    if (unifiedContainer) {
+      sellerLinkElement =
+        unifiedContainer.querySelector('a[href*="/user/"]') ||
+        unifiedContainer.querySelector('a[href*="/brands/"]');
+    }
+  }
+
   if (!sellerLinkElement) return null;
   return extractUserIdFromSellerUrl(sellerLinkElement.href);
 }
@@ -1556,11 +1829,50 @@ function createHiddenContainer() {
   detailsElement.appendChild(summaryElement);
   detailsElement.appendChild(contentElement);
 
-  // Append the <details> element to the document body or another element
-  offersRoot.appendChild(hr);
-  offersRoot.appendChild(detailsElement);
+  // Ищем точку вставки: после списка объявлений catalog-serp, а не в самый конец offersRoot
+  const serpList =
+    (offersRoot && offersRoot.querySelector('[data-marker="catalog-serp"]')) ||
+    document.querySelector('[data-marker="catalog-serp"]') ||
+    (offersRoot && offersRoot.querySelector("#bx_serp-item-list")) ||
+    document.querySelector("#bx_serp-item-list");
+
+  const insertAnchor = serpList && (serpList.parentElement === offersRoot || offersRoot?.contains(serpList))
+    ? serpList
+    : null;
+
+  if (insertAnchor && insertAnchor.parentNode) {
+    // Вставляем после списка объявлений (следующий сосед)
+    insertAnchor.after(hr);
+    hr.after(detailsElement);
+  } else if (offersRoot) {
+    offersRoot.appendChild(hr);
+    offersRoot.appendChild(detailsElement);
+  } else if (document.body) {
+    // Абсолютный fallback — в body, только если offersRoot не найден совсем
+    document.body.appendChild(hr);
+    document.body.appendChild(detailsElement);
+  }
 
   return contentElement;
+}
+
+function hideOffersByUserId(userId) {
+  if (!userId) return;
+
+  for (const offerElement of document.querySelectorAll(offersSelector)) {
+    if (isHiddenOriginal(offerElement) || isHiddenClone(offerElement)) {
+      continue;
+    }
+
+    const offerId = getOfferId(offerElement);
+    const id =
+      extractUserIdFromCatalogItem(getCatalogItemByOfferId(offerId)) ||
+      extractUserIdFromOfferElement(offerElement);
+
+    if (id === userId) {
+      updateOfferState(offerElement, { offerId, userId });
+    }
+  }
 }
 
 function insertBlockSellerButton(offerElement, offerInfo) {
@@ -1579,9 +1891,13 @@ function insertBlockSellerButton(offerElement, offerInfo) {
   buttonContainer.appendChild(blockButton);
   blockButton.addEventListener("click", (event) => {
     event.stopPropagation();
-    if (offerInfo.userId) addUserToBlacklist(offerInfo.userId);
-    buttonContainer.remove();
-    processSearchPage();
+    if (offerInfo.userId) {
+      addUserToBlacklist(offerInfo.userId);
+      buttonContainer.remove();
+      hideOffersByUserId(offerInfo.userId);
+    } else {
+      buttonContainer.remove();
+    }
   });
 }
 
@@ -1651,9 +1967,18 @@ function insertUnblockOfferButton(offerElement, offerInfo) {
   });
 }
 
+function ensurePositionRelative(el) {
+  if (!el) return;
+  const style = window.getComputedStyle(el);
+  if (!style || style.position === 'static') {
+    el.style.position = 'relative';
+  }
+}
+
 function insertButtonContainer(offerElement) {
   const container = document.createElement("div");
   container.classList.add("button-container");
+  ensurePositionRelative(offerElement);
   offerElement.appendChild(container);
   return container;
 }
@@ -1912,20 +2237,69 @@ function processOfferElement(offerElement) {
 }
 
 function processSearchPageNow() {
-  if (!catalogData) return;
-  dedupeAllHiddenClones();
-  pruneReservedCaches();
+  // Fallback: если catalogData пуст (например, после XHR без <script> не вставился),
+  // пробуем собрать catalogData из DOM
+  if (!catalogData || catalogData.length === 0) {
+    try {
+      const fromDom = getCatalogDataAlternative();
+      if (fromDom && fromDom.length > 0) {
+        setCatalogData(fromDom);
+        console.log(`${logPrefix} catalogData восстановлен из DOM: ${catalogData.length} элементов`);
+      }
+    } catch (_) { /* ignore */ }
+  }
+
+  // dedupe/cache-cleanup работают без catalogData
+  try { dedupeAllHiddenClones(); } catch (_) {}
+  try { pruneReservedCaches(); } catch (_) {}
 
   const offerElements = document.querySelectorAll(offersSelector);
+  if (!offerElements || offerElements.length === 0) return;
+
   for (const offerElement of offerElements) {
     if (isHiddenOriginal(offerElement)) continue;
-    processOfferElement(offerElement);
+    // processOfferElement сам имеет собственный fallback на DOM-прямую из offerElement
+    // (извлекает userId из href /user/, offerId из data-item-id)
+    try {
+      processOfferElement(offerElement);
+    } catch (err) {
+      console.error(`${logPrefix} Ошибка обработки карточки:`, err);
+    }
   }
 }
 
 function processSearchPage() {
   clearTimeout(processSearchPageTimeout);
   processSearchPageTimeout = setTimeout(processSearchPageNow, PROCESS_SEARCH_DEBOUNCE_MS);
+}
+
+// ==================== SEARCH TOGGLES RECOVERY ====================
+
+let _searchToggleEnsureTimeout = null;
+
+function ensureSearchTogglesPresent() {
+  try {
+    bindNativePriorityToggleWatcher();
+    const cityToggle = document.querySelector(`[data-marker="${CITY_FILTER_MARKER}"]`);
+    const reservedToggle = document.querySelector(`[data-marker="${HIDE_RESERVED_FILTER_MARKER}"]`);
+    // Если какой-то из наших кастомных переключателей отсутствует, пытаемся вставить оба
+    if (!cityToggle) insertCityFilterToggle();
+    if (!reservedToggle) insertHideReservedToggle();
+  } catch (err) {
+    console.warn(`${logPrefix} Ошибка восстановления переключателей:`, err);
+  }
+}
+
+function scheduleEnsureToggles(immediate) {
+  if (immediate) {
+    // Первый вызов — немедленно, чтобы избежать FOUC (мгновенное появление/исчезновение)
+    clearTimeout(_searchToggleEnsureTimeout);
+    ensureSearchTogglesPresent();
+    _searchToggleEnsureTimeout = setTimeout(() => { /* no-op, just debounce marker */ }, 300);
+    return;
+  }
+  clearTimeout(_searchToggleEnsureTimeout);
+  _searchToggleEnsureTimeout = setTimeout(ensureSearchTogglesPresent, 280);
 }
 
 // ==================== RECOMMENDATIONS PAGE FUNCTIONALITY ====================
@@ -2202,18 +2576,97 @@ function processSellerPage(userId) {
   }
 }
 
+function collectCatalogItemsDeep(root) {
+  if (!root || typeof root !== "object") return [];
+
+  const seen = new Set();
+  const stack = [root];
+  let steps = 0;
+
+  while (stack.length && steps < 500) {
+    steps += 1;
+    const node = stack.pop();
+    if (!node || typeof node !== "object" || seen.has(node)) continue;
+    seen.add(node);
+
+    const catalog = node.catalog;
+    if (catalog && Array.isArray(catalog.items)) {
+      const items = (catalog.items || []).concat(catalog.extraBlockItems || []);
+      const filtered = items.filter((item) => item && item.hasOwnProperty("categoryId"));
+      if (filtered.length) return filtered;
+    }
+
+    if (
+      Array.isArray(node.items) &&
+      node.items.length > 0 &&
+      node.items[0] &&
+      node.items[0].categoryId &&
+      node.items[0].id
+    ) {
+      return node.items.filter((item) => item && item.categoryId);
+    }
+
+    const values = Array.isArray(node) ? node : Object.values(node);
+    for (const value of values) {
+      if (value && typeof value === "object") stack.push(value);
+    }
+  }
+
+  return [];
+}
+
 function getCatalogDataFromInit(initialData) {
-  // Проверяем существование необходимых свойств
-  if (!initialData || !initialData.data || !initialData.data.catalog) {
-    console.warn(`${logPrefix} Неверная структура initialData:`, initialData);
+  if (!initialData || typeof initialData !== "object") {
     return [];
   }
-  
-  const catalogItems = initialData.data.catalog.items || [];
-  const extraItems = initialData.data.catalog.extraBlockItems || [];
-  let allItems = catalogItems.concat(extraItems);
-  allItems = allItems.filter((item) => item.hasOwnProperty("categoryId"));
-  return allItems;
+
+  const catalogs = [
+    initialData.data?.catalog,
+    initialData.catalog,
+    initialData.loaderData?.catalog,
+    initialData.state?.catalog,
+  ];
+
+  for (const catalog of catalogs) {
+    if (!catalog || !Array.isArray(catalog.items)) continue;
+    const catalogItems = catalog.items || [];
+    const extraItems = catalog.extraBlockItems || [];
+    const allItems = catalogItems.concat(extraItems).filter((item) => item && item.hasOwnProperty("categoryId"));
+    if (allItems.length) return allItems;
+  }
+
+  return collectCatalogItemsDeep(initialData);
+}
+
+function extractCatalogDataFromDoc(doc) {
+  const scripts = doc.querySelectorAll("script");
+  for (const script of scripts) {
+    const raw = script.textContent || "";
+    const text = raw.trim();
+    if (!text) continue;
+
+    if (text.includes("window.__initialData__ =")) {
+      const parsed = parseInitialData(raw);
+      if (parsed) {
+        const items = getCatalogDataFromInit(parsed);
+        if (items.length) return items;
+      }
+    }
+
+    if (text.startsWith("window.") || text.startsWith("window[")) continue;
+    if (!text.startsWith("{")) continue;
+    if (!text.includes("catalog") && !text.includes("abCentral")) continue;
+
+    try {
+      const data = JSON.parse(decodeHtmlEntities(text));
+      const items = getCatalogDataFromInit(data);
+      if (items.length) return items;
+    } catch (error) {
+      console.warn(`${logPrefix} Пропуск скрипта catalog:`, error.message);
+    }
+  }
+
+  return getCatalogDataFromItemMarkers(doc);
 }
 
 // Альтернативный способ получения данных каталога из DOM
@@ -2364,11 +2817,11 @@ function getCatalogDataFromPreloadedState() {
 }
 
 // Дополнительная функция для извлечения данных из элементов с data-marker="item"
-function getCatalogDataFromItemMarkers() {
+function getCatalogDataFromItemMarkers(root = document) {
   console.log(`${logPrefix} Поиск данных из элементов с data-marker="item"`);
   
   const catalogData = [];
-  const itemElements = document.querySelectorAll('[data-marker="item"]');
+  const itemElements = root.querySelectorAll('[data-marker="item"]');
   
   itemElements.forEach(element => {
     const offerId = element.getAttribute('data-item-id');
@@ -2385,8 +2838,10 @@ function getCatalogDataFromItemMarkers() {
       const sellerLinkElement = element.querySelector('a[href*="/user/"]') || 
                                element.querySelector('a[href*="/brands/"]');
       
-      // Получаем ссылку на объявление
-      const offerLinkElement = element.querySelector('a[href*="/predlozheniya_uslug/"]');
+      const offerLinkElement =
+        element.querySelector('[data-marker="item-title"]') ||
+        element.querySelector('a[itemprop="url"]') ||
+        element.querySelector('a[href*="/predlozheniya_uslug/"]');
       const offerUrl = offerLinkElement ? offerLinkElement.href : '';
       
       // Извлекаем ID продавца из ссылки (поддерживаем и /user/ и /brands/)
@@ -2676,28 +3131,52 @@ async function main() {
             }
           } else {
             // страница поиска
+            if (node instanceof Element && node.hasAttribute(HIDDEN_CLONE_ATTR)) {
+              return;
+            }
+
+            let triggeredSearchProcessing = false;
+            let triggeredEnsureToggles = false;
+
             if (node instanceof Element && node?.getAttribute("elementtiming") === offersRootSelectorValue) {
               console.log(`${logPrefix} offersRootSelector обновлен`);
-              // Пробуем добавить переключатель при обновлении DOM
-              insertCityFilterToggle();
-              insertHideReservedToggle();
-              if (!catalogData) return;
-              processSearchPage();
+              triggeredEnsureToggles = true;
+              triggeredSearchProcessing = true;
             }
             if (node?.classList?.toString().includes("styles-singlePageWrapper")) {
               console.log(`${logPrefix} singlePageWrapper обновлен`);
-              // Пробуем добавить переключатель при обновлении DOM
-              insertCityFilterToggle();
-              insertHideReservedToggle();
-              if (!catalogData) return;
-              processSearchPage();
+              triggeredEnsureToggles = true;
+              triggeredSearchProcessing = true;
             }
             // Проверяем появление верхней панели с фильтрами
-            if (node instanceof Element && node?.classList?.toString().includes("index-topPanel-")) {
+            const nodeClassStr = node instanceof Element ? node?.classList?.toString() : '';
+            if (nodeClassStr && (nodeClassStr.includes("topPanel-") || nodeClassStr.includes("index-topPanel-"))) {
               console.log(`${logPrefix} Верхняя панель обнаружена`);
-              insertCityFilterToggle();
-              insertHideReservedToggle();
+              triggeredEnsureToggles = true;
             }
+            // Проверяем добавление новых карточек товара (самой ноды или вложенных)
+            // Это сценарий: XHR /web/1/js/items заменил содержимое serp-контейнера
+            const isItem = node instanceof Element && node.getAttribute && node.getAttribute('data-marker') === 'item';
+            const hasItems = node instanceof Element && node.querySelector && node.querySelector('[data-marker="item"]');
+            if (isItem || hasItems) {
+              triggeredSearchProcessing = true;
+              triggeredEnsureToggles = true;
+            }
+
+            if (triggeredEnsureToggles) {
+              scheduleEnsureToggles(false);
+            }
+            if (triggeredSearchProcessing) {
+              // Fallback catalogData из DOM — если abCentral не пришёл через <script>
+              if (!catalogData || catalogData.length === 0) {
+                try {
+                  const fromDom = getCatalogDataAlternative();
+                  if (fromDom && fromDom.length > 0) setCatalogData(fromDom);
+                } catch (_) {/* ignore */}
+              }
+              processSearchPage();
+            }
+
             if (node instanceof HTMLScriptElement && node?.textContent?.includes("abCentral") && node?.textContent?.startsWith("{")) {
               try {
                 let dataNodeContent = node.textContent;
@@ -2711,12 +3190,14 @@ async function main() {
                 setCatalogData(getCatalogDataFromInit(initialData));
                 console.log(`${logPrefix} catalogData получен: ${catalogData.length} элементов`);
                 if (catalogData && catalogData.length > 0) {
+                  scheduleEnsureToggles(true);
                   processSearchPage();
                 } else {
                   console.warn(`${logPrefix} catalogData пуст или не найден, пробуем альтернативные способы`);
                   setCatalogData(getCatalogDataAlternative());
                   if (catalogData && catalogData.length > 0) {
                     console.log(`${logPrefix} Данные получены альтернативным способом: ${catalogData.length} элементов`);
+                    scheduleEnsureToggles(true);
                     processSearchPage();
                   } else {
                     console.warn(`${logPrefix} Не удалось получить данные каталога никаким способом`);
@@ -2728,6 +3209,7 @@ async function main() {
                 setCatalogData(getCatalogDataAlternative());
                 if (catalogData && catalogData.length > 0) {
                   console.log(`${logPrefix} Данные получены альтернативным способом после ошибки: ${catalogData.length} элементов`);
+                  scheduleEnsureToggles(true);
                   processSearchPage();
                 }
               }

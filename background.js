@@ -14,7 +14,11 @@ browser.runtime.onInstalled.addListener(function (object) {
     const currentVersion = browser.runtime.getManifest().version;
     
     let externalUrl;
-    if (currentVersion === "1.0.11") {
+    if (currentVersion === "1.0.12.1") {
+      externalUrl = "https://ave.syrnikovpavel.ru/static/1.0.12.1/";
+    } else if (currentVersion === "1.0.12") {
+      externalUrl = "https://ave.syrnikovpavel.ru/static/1.0.12/";
+    } else if (currentVersion === "1.0.11") {
       externalUrl = "https://ave.syrnikovpavel.ru/static/1.0.11/";
     } else if (currentVersion === "1.0.10") {
       externalUrl = "https://ave.syrnikovpavel.ru/static/1.0.10/";

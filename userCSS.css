@@ -2,19 +2,29 @@
   display: none;
 }
 
+[class*='listItem-']:hover .button-container,
+[class*='items-listItem']:hover .button-container {
+  bottom: 8px;
+  right: 8px;
+}
+
+[class*='galleryItem-']:hover .button-container,
+[class*='items-galleryItem']:hover .button-container {
+  bottom: 8px;
+  right: 8px;
+}
+
 [data-marker="item"]:hover .button-container {
   position: absolute;
   display: flex;
+  gap: 8px;
   z-index: 10000;
-  right: 0;
+  bottom: 8px;
+  right: 8px;
 }
 
-[class*='items-galleryItem']:hover .button-container {
-  top: 0;
-}
-
-[class*='items-listItem']:hover .button-container {
-  bottom: 0;
+[data-marker="item"] {
+  position: relative !important;
 }
 
 .custom-button {
@@ -275,4 +285,20 @@
 
 .ave-note-counter {
   color: #68768d;
+}
+
+/* Isolate cloned Avito switches from native localPriority CSS leaks */
+.ave-filter-toggle [class*="toggle-"] {
+  background: #d9d9d9 !important;
+  background-color: #d9d9d9 !important;
+}
+.ave-filter-toggle[aria-checked="true"] [class*="toggle-"] {
+  background: #000000 !important;
+  background-color: #000000 !important;
+}
+.ave-filter-toggle [class*="switcherCircle-"] {
+  transform: translateX(0) !important;
+}
+.ave-filter-toggle[aria-checked="true"] [class*="switcherCircle-"] {
+  transform: translateX(16px) !important;
 }
